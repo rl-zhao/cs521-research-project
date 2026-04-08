@@ -49,10 +49,24 @@ cs521-research-project/
 ├── notebooks/
 │   └── analysis.ipynb            # Figures & tables for the report
 │
-├── data/videos/               # Place .mp4/.avi/.mkv clips here
+├── data/videos/               # Place .mp4/.avi/.mkv clips here (see note below)
 ├── models/                    # Trained error models (.pkl)
 └── results/                   # CSV outputs and PDF figures
 ```
+
+---
+
+## Video Data
+
+> **Note:** Video files are excluded from this repository (too large for git).
+> After cloning, place the following files in `data/videos/` before running any scripts:
+>
+> - `Trailer1.mp4`
+> - `Sports1.mp4`
+> - `Lecture1.mp4`
+>
+> Any `.mp4` file with those names will work. You can also add your own clips —
+> any `.mp4`/`.avi`/`.mkv` files dropped into `data/videos/` will be picked up automatically.
 
 ---
 
