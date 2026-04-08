@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# Video files (too large for git)
+data/videos/*.mp4
+data/videos/*.avi
+data/videos/*.mkv
+data/videos/*.mov
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
