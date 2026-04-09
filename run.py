@@ -77,7 +77,7 @@ def main() -> None:
         sys.exit(1)
 
     output_path = args.output or str(
-        input_path.parent / f"{input_path.stem}_videochef.mp4"
+        config.RESULTS_DIR / f"{input_path.stem}_videochef.mp4"
     )
 
     threshold = args.threshold or (
