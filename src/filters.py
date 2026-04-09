@@ -46,70 +46,65 @@ def _register(name: str):
 
 def _loop_perforate(frame: np.ndarray, filter_fn, approx_level: int) -> np.ndarray:
     """
-    Real row-based loop perforation.
+    Row-based loop perforation, faithful to the paper (Section 3.1).
 
-    The filter is applied at full resolution so that each accepted row has
-    correct spatial context (neighbouring pixels are real, not interpolated).
-    Only every approx_level-th row of the filtered output is kept; the
-    remaining rows are filled by linear interpolation between the accepted
-    rows.  This produces authentic horizontal banding artefacts distinct
-    from the blur introduced by naive resize-based simulation.
+    Paper pseudocode:
+        for (i = 0; i < n; i = i + approx_level)
+            result = compute_result();
+
+    Only every approx_level-th row is computed. Skipped rows are not written
+    and retain the original input pixel values. At AL=3 rows 0,3,6,... get
+    the filtered output; rows 1,2,4,5,... keep the raw input pixels.
+    This produces authentic horizontal banding artefacts.
+    Theoretical speedup: ~approx_level x.
     """
     if approx_level <= 1:
         return filter_fn(frame)
 
-    h, w = frame.shape[:2]
-    filtered = filter_fn(frame).astype(np.float32)
-
-    selected = np.arange(0, h, approx_level)          # accepted row indices
-    flat_sel = filtered.reshape(h, -1)[selected]       # (n_sel, w*c)
-
-    all_rows = np.arange(h)
-    i_low  = np.clip(np.searchsorted(selected, all_rows, side='right') - 1,
-                     0, len(selected) - 1)
-    i_high = np.clip(i_low + 1, 0, len(selected) - 1)
-
-    r_low  = selected[i_low].astype(np.float32)
-    r_high = selected[i_high].astype(np.float32)
-    denom  = np.where(r_high > r_low, r_high - r_low, 1.0)
-    t      = np.clip((all_rows - r_low) / denom, 0.0, 1.0)
-
-    result_flat = ((1.0 - t)[:, None] * flat_sel[i_low] +
-                   t[:, None]         * flat_sel[i_high])
-    return result_flat.reshape(frame.shape).clip(0, 255).astype(np.uint8)
+    filtered = filter_fn(frame)
+    result = frame.copy()                    # skipped rows keep original values
+    result[::approx_level] = filtered[::approx_level]   # computed rows
+    return result
 
 
 def _memoize(frame: np.ndarray, filter_fn, approx_level: int) -> np.ndarray:
     """
-    2-D block memoization (2-D loop perforation).
+    Row-based loop memoization, faithful to the paper (Section 3.1).
 
-    The filter is applied at full resolution for correct context, but only
-    a sparse approx_level x approx_level grid of output pixels is accepted.
-    The gaps are filled by bilinear interpolation (cv2.resize), producing
-    smooth but spatially-subsampled artefacts distinct from loop perforation.
-    Theoretical speedup is approx_level^2 x.
+    Paper pseudocode:
+        for (i = 0; i < n; i++)
+            if (i % approx_level == 0)
+                cached_result = result = compute_result();
+            else
+                result = cached_result;
+
+    Every row is visited. Computed rows (i % approx_level == 0) get the real
+    filtered output and update the cache. Skipped rows copy the most recently
+    computed row (nearest-neighbour row repeat, no interpolation).
+    At AL=3: rows 0,3,6,... are computed; rows 1,2 copy row 0; rows 4,5 copy
+    row 3; etc.
+    Theoretical speedup: ~approx_level x (same loop count, cheaper body).
     """
     if approx_level <= 1:
         return filter_fn(frame)
 
-    h, w = frame.shape[:2]
-    filtered = filter_fn(frame).astype(np.float32)
+    h = frame.shape[0]
+    filtered = filter_fn(frame)
 
-    row_sel = np.arange(0, h, approx_level)
-    col_sel = np.arange(0, w, approx_level)
-    sparse  = filtered[np.ix_(row_sel, col_sel)]      # (n_rows, n_cols [, c])
-
-    result = cv2.resize(sparse, (w, h), interpolation=cv2.INTER_LINEAR)
-    return result.clip(0, 255).astype(np.uint8)
+    # For each row index i, the nearest computed row below it is
+    # (i // approx_level) * approx_level  — fully vectorised, no Python loop.
+    src_rows = (np.arange(h) // approx_level) * approx_level
+    src_rows = np.clip(src_rows, 0, h - 1)
+    return filtered[src_rows]
 
 
 def _approximate(frame: np.ndarray, filter_fn, approx_level: int,
                  approx_type: str = 'perf') -> np.ndarray:
     """
-    Dispatch to the correct approximation implementation.
+    Dispatch to the correct approximation implementation (paper Section 3.1).
 
-    approx_type 'perf'  -> _loop_perforate  (row-based, ~k x speedup)
-    approx_type 'memo'  -> _memoize         (2-D grid,  ~k^2 x speedup)
+    approx_type 'perf'  -> _loop_perforate  (skip rows, keep original values)
+    approx_type 'memo'  -> _memoize         (repeat last computed row)
     """
     if approx_type == 'memo':
         return _memoize(frame, filter_fn, approx_level)
@@ -335,12 +330,14 @@ def estimate_exec_time(
         exact_al = [1] * len(al_vector)
     exact_key = tuple(exact_al)
 
-    # Determine exponent per filter: perf -> 1, memo -> 2
+    # Both perf and memo give ~k x speedup per the paper:
+    # perf skips k-1 out of k rows entirely (~k x fewer iterations).
+    # memo visits every row but k-1 out of k have a cheap cache hit (~k x cheaper body).
+    # We use exponent=1 for both; pipeline arg kept for future extensibility.
     if pipeline is not None:
-        exponents = [1 if atype == 'perf' else 2
-                     for _, atype in pipeline]
+        exponents = [1 for _ in pipeline]
     else:
-        exponents = [2] * len(al_vector)
+        exponents = [1] * len(al_vector)
 
     speedup = float(np.prod([al ** exp
                               for al, exp in zip(al_vector, exponents)]))
